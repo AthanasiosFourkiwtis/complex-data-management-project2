@@ -23,6 +23,9 @@ desktop.ini
 # Office temp files
 ~$*
 
+# Project-specific exclusions
+Rtree_neo.py
+
 # Distribution / packaging
 build/
 dist/

@@ -4,7 +4,7 @@
 
 ## Περιεχόμενα
 
-- `Rtree.py`, `Rtree_neo.py` — Υλοποίηση R-tree δομής
+- `Rtree.py` — Υλοποίηση R-tree δομής
 - `WindowQuery.py` — Window range queries
 - `NNQuery.py` — Nearest neighbor queries
 - `DistanceQuery.py` — Distance range queries
