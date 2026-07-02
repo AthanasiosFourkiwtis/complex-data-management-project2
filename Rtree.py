@@ -1,15 +1,15 @@
 # AM:4940 FOURKIOTIS ATHANASIOS
-# Perigrafi: Diavazw simeia apo arxeio, ftiaxnw R-tree me STR bulk loading
-#            sti mnimi, to grafoume se CSV kai typonw statistika.
+# Description: Reads points from a file, builds an in-memory R-tree with STR
+#              bulk loading, writes it out to CSV, and prints statistics.
 
 import sys
 import math
 
-# STATHERES
-# Kathe kombos = 1024 bytes
-# Fyllo   : rid(4B) + x(8B) + y(8B) = 20B -> MAX = floor(1024/20) = 51
-# Endiames: nid(4B) + 4*8B (MBR) = 36B    -> MAX = floor(1024/36) = 28
-# MIN = 40% tou MAX (kanones R-tree gia na min exoume adeioys kombous)
+# CONSTANTS
+# Each node = 1024 bytes
+# Leaf     : rid(4B) + x(8B) + y(8B) = 20B -> MAX = floor(1024/20) = 51
+# Internal : nid(4B) + 4*8B (MBR) = 36B    -> MAX = floor(1024/36) = 28
+# MIN = 40% of MAX (R-tree rule, so nodes never end up nearly empty)
 
 MAX_LEAF = 51
 MAX_INT  = 28
@@ -17,14 +17,14 @@ MIN_LEAF = 20   # floor(0.4 * 51) = 20
 MIN_INT  = 11   # floor(0.4 * 28) = 11
 
 
-def vres_mbr_simeiwn(lista_simeiwn):
-    # pairnei lista apo (x,y) kai epistrefei to [x_low,_low,x_high,y_high]
-    x_low  = lista_simeiwn[0][0]
-    x_high = lista_simeiwn[0][0]
-    y_low  = lista_simeiwn[0][1]
-    y_high = lista_simeiwn[0][1]
+def mbr_of_points(point_list):
+    # takes a list of (x,y) and returns the [x_low, y_low, x_high, y_high]
+    x_low  = point_list[0][0]
+    x_high = point_list[0][0]
+    y_low  = point_list[0][1]
+    y_high = point_list[0][1]
 
-    for s in lista_simeiwn:
+    for s in point_list:
         if s[0] < x_low:
             x_low = s[0]
         if s[0] > x_high:
@@ -37,15 +37,15 @@ def vres_mbr_simeiwn(lista_simeiwn):
     return [x_low, y_low, x_high, y_high]
 
 
-def vres_mbr_kombwn(lista_mbr):
-    # idia logiki, alla eisodos einai lista apo MBRs (oxi simeia)
-    # to xreiazomai otan ftiaxnw gonea afou to MBR tou xwraei ola ta MBR twn paidiwn
-    x_low  = lista_mbr[0][0]
-    y_low  = lista_mbr[0][1]
-    x_high = lista_mbr[0][2]
-    y_high = lista_mbr[0][3]
+def mbr_of_mbrs(mbr_list):
+    # same idea, but the input is a list of MBRs (not points)
+    # needed when building a parent, whose MBR must enclose all its children's MBRs
+    x_low  = mbr_list[0][0]
+    y_low  = mbr_list[0][1]
+    x_high = mbr_list[0][2]
+    y_high = mbr_list[0][3]
 
-    for m in lista_mbr:
+    for m in mbr_list:
         if m[0] < x_low:
             x_low = m[0]
         if m[1] < y_low:
@@ -58,139 +58,139 @@ def vres_mbr_kombwn(lista_mbr):
     return [x_low, y_low, x_high, y_high]
 
 
-def embado_mbr(mbr):
-    return (mbr[2] - mbr[0]) * (mbr[3] - mbr[1]) #πλάτος = x_high - x_low
-                                                 #ύψος = y_high - y_low
-                                                 #εμβαδόν = πλάτος * ύψος
+def mbr_area(mbr):
+    return (mbr[2] - mbr[0]) * (mbr[3] - mbr[1]) #width = x_high - x_low
+                                                 #height = y_high - y_low
+                                                 #area = width * height
 
 
-def diavase_simeia(path): #diavazei Beijing_restaurants.txt
-    # prwti grammi = plithos (to agnooume, diavazoume osa vroume)
-    # kathe alli grammi: "x y"
+def read_points(path): #reads Beijing_restaurants.txt
+    # first line = point count (ignored; we just read whatever we find)
+    # every other line: "x y"
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
-    simeia = [] #adeia lista gia ta shmeia
-    for i in range(1, len(grammes)): #ksekinaw apo 1 oxi apo 0 afou h grammi 0 einai to plh8os(51970)
-        g = grammes[i].strip() #vgazw ta /n sto telos
-        if g == "":   #an grammi kenh thn paraleipw
+    points = [] #empty list for the points
+    for i in range(1, len(lines)): #start at 1, not 0, since line 0 holds the count (51970)
+        g = lines[i].strip() #drop the trailing \n
+        if g == "":   #skip blank lines
             continue
-        meri = g.split() # px "39.856 116.423"->.split()->["39.856", "116.423"]->float()->(39.856, 116.423)-> x=39.856 kai y=116.423
-        x = float(meri[0]) #meri[0],meri[1] einai string kai den mporw na kanw mathimatika se strings ara to kanw float
-        y = float(meri[1])
-        simeia.append((x, y)) # dipli parenthesi gt thelw na prosthesw ena tuple kai oxi 2 orismata opote tha eskage gt h append pernei 1 orisma
+        parts = g.split() # e.g. "39.856 116.423"->.split()->["39.856", "116.423"]->float()->(39.856, 116.423)-> x=39.856 and y=116.423
+        x = float(parts[0]) #parts[0], parts[1] are strings and you can't do math on strings, so convert to float
+        y = float(parts[1])
+        points.append((x, y)) # double parentheses because we append one tuple, not 2 arguments — append takes a single argument
 
-    return simeia
+    return points
 
-def xwrise_se_groups(lista, megethos): # xrhsimopoieitai gia na kopsw ta shmeia se fylla twn 51 h komvous se omades twn 28
-    # spao ti lista se ypolistes twn 'megethos' stoixeiwn
-    # to teleutaio group mporei na exei ligotero
-    # p.x. [1,2,3,4,5], megethos=2  ->  [[1,2], [3,4], [5]]
+def split_into_groups(lst, size): # used to cut the points into leaves of 51, or nodes into groups of 28
+    # breaks the list into sublists of 'size' elements
+    # the last group may hold fewer
+    # e.g. [1,2,3,4,5], size=2  ->  [[1,2], [3,4], [5]]
     groups = []
-    trexon_group = []
-    for stoixeio in lista:
-        trexon_group.append(stoixeio)
-        if len(trexon_group) == megethos:
-            groups.append(trexon_group)
-            trexon_group = []
-    
-    # Gia to teleytaio group an einai mikrotero tou "megethos"
-    if len(trexon_group) > 0:
-        groups.append(trexon_group)
-    
+    current_group = []
+    for item in lst:
+        current_group.append(item)
+        if len(current_group) == size:
+            groups.append(current_group)
+            current_group = []
+
+    # keep the last group even if it's smaller than 'size'
+    if len(current_group) > 0:
+        groups.append(current_group)
+
     return groups
 
 
-def diorthwse_underflow(groups, elaxisto):
-    # an o teleytaios kombos exei ligoteres eggrafes apo to elaxisto,
-    # "kleboume" stoixeia apo ton protelevtaio
-    # exairesi: mono 1 group = riza, den kanoume tipota
+def fix_underflow(groups, minimum):
+    # if the last node holds fewer entries than the minimum,
+    # we "steal" elements from the second-to-last one
+    # exception: a single group = the root, nothing to do
 
     if len(groups) < 2:
-        return groups # an exw 1 group dhladh riza den kanw tipota kathws h riza ekseiritai apo to minimum
+        return groups # with only 1 group (i.e. the root) do nothing, since the root is exempt from the minimum
 
-    teleytaios = groups[-1]
+    last = groups[-1]
 
-    if len(teleytaios) >= elaxisto:
-        return groups   # ola ok
+    if len(last) >= minimum:
+        return groups   # all good
 
-    # posa stoixeia xreiazomai na prosthesw
-    leipoun = elaxisto - len(teleytaios)
-    protelevtaios = groups[-2]
+    # how many elements are missing
+    missing = minimum - len(last)
+    second_to_last = groups[-2]
 
-    # pairnoume ta teleytaia 'leipoun' stoixeia tou protelevtaiou
-    ta_extra = protelevtaios[-leipoun:] 
-    groups[-2] = protelevtaios[:-leipoun] # antikatestise to proteleutaio group me ola ta stoixeia ektos apo ta teleutaia 'leipoun'
-    groups[-1] = ta_extra + teleytaios #Antikatestise to teleytaio group me ta ta_extra (pou metefera) + ta stoixeia pou eixe hdh.
-      # edw einai ta_extra + teleutaios kai oxi teleytaios + ta_extra Giati ta stoixeia einai taksinomhmena kata y (apo to STR). Το orfano shmeio 
-      #exei to megaliero y sto dataset. Ta ta_extra (teleutaia tou proteleutaiou) exoun mikrotero y apo to orfano alla megalitero apo ta stoixeia pou emeinan sto proteleutaio.
-   
-   # print("underflow fix: teleytaios tora exei", len(groups[-1]))  # debug
+    # take the last 'missing' elements of the second-to-last group
+    extras = second_to_last[-missing:]
+    groups[-2] = second_to_last[:-missing] # replace the second-to-last group with everything except its last 'missing' elements
+    groups[-1] = extras + last # replace the last group with the moved extras + whatever it already held.
+      # it's extras + last and not last + extras because the elements are sorted by y (from STR). The orphan point
+      # has the largest y in the dataset. The extras (tail of the second-to-last group) have a smaller y than the orphan but a larger y than what remained in the second-to-last group.
+
+   # print("underflow fix: last group now holds", len(groups[-1]))  # debug
     return groups
 
-def key_x_simeio(eggrafi):
-    # eggrafi = (record_id, (x, y)) -> epistrefei x gia taksinomisi
-    return eggrafi[1][0]
+def point_key_x(entry):
+    # entry = (record_id, (x, y)) -> returns x for sorting
+    return entry[1][0]
 
 
-def key_y_simeio(eggrafi):
-    # epistrefei y gia taksinomisi
-    return eggrafi[1][1]
- # oi 2 parapanw einai voithitikes synarthseis poy lene sthn sorted me vasi poia syntetagmenh na taksinomhsei
- 
-def str_pack_fylla(eggrafes): #pairnei eggrafes kai epistrfei omades pou tha ginoun fylla
-    # eggrafes = lista apo (record_id, (x,y))
-    # epistrefei lista apo groups -> kathe group tha ginei ena fyllo
+def point_key_y(entry):
+    # returns y for sorting
+    return entry[1][1]
+ # the 2 helpers above tell sorted() which coordinate to sort by
 
-    N = len(eggrafes) # an den yparxoun shmeia epestrepse kenh lista
+def str_pack_leaves(entries): #takes entries and returns the groups that will become leaves
+    # entries = list of (record_id, (x,y))
+    # returns a list of groups -> each group becomes one leaf
+
+    N = len(entries) # if there are no points, return an empty list
     if N == 0:
         return []
 
-    # posa fylla xreiazomai
+    # how many leaves are needed
     P = math.ceil(N / MAX_LEAF)
-    # poses kathetes lwrides -> theloume tetragwna "tiles" sti xwrika
+    # how many vertical slices -> we want roughly square spatial "tiles"
     S = math.ceil(math.sqrt(P))
     if S < 1:
         S = 1
 
-    # print("fylla: N =", N, " P =", P, " S =", S)  # debug
+    # print("leaves: N =", N, " P =", P, " S =", S)  # debug
 
-    # Vima 1: taksinomisi kata x (apo aristera pros ta deksia ston xarti)
-    sortd_x = sorted(eggrafes, key=key_x_simeio)
+    # Step 1: sort by x (left to right on the map)
+    sortd_x = sorted(entries, key=point_key_x)
 
-    # Vima 2: kopsimo se S kathetes lwrides(kathe lwrida = S*MAX_LEAF stoixeia)
-    lwrides = xwrise_se_groups(sortd_x, S * MAX_LEAF)
+    # Step 2: cut into S vertical slices (each slice = S*MAX_LEAF elements)
+    slices = split_into_groups(sortd_x, S * MAX_LEAF)
 
-    # Vima 3: se kathe lwrida, taksinomisi kata y kai prosthetw stin teliki lista
-    teliki = []
-    for lwrida in lwrides:
-        sortd_y = sorted(lwrida, key=key_y_simeio)
+    # Step 3: within each slice, sort by y and append to the final list
+    final = []
+    for slc in slices:
+        sortd_y = sorted(slc, key=point_key_y)
         for eg in sortd_y:
-            teliki.append(eg)
+            final.append(eg)
 
-    # Vima 4: kopsimo se groups MAX_LEAF + diorthwsi underflow
-    groups = xwrise_se_groups(teliki, MAX_LEAF)
-    groups = diorthwse_underflow(groups, MIN_LEAF)
+    # Step 4: cut into groups of MAX_LEAF + fix underflow
+    groups = split_into_groups(final, MAX_LEAF)
+    groups = fix_underflow(groups, MIN_LEAF)
 
     return groups
 
-def key_x_kombou(kombos):
-    # epistrefei to kentro_x tou MBR tou kombou (gia taksinomisi)
-    mbr = kombos["mbr"]
+def node_key_x(node):
+    # returns the center_x of the node's MBR (for sorting)
+    mbr = node["mbr"]
     return (mbr[0] + mbr[2]) / 2.0
 
 
-def key_y_kombou(kombos):
-    # epistrefei to kentro_y tou MBR tou kombou (gia taksinomisi)
-    mbr = kombos["mbr"]
+def node_key_y(node):
+    # returns the center_y of the node's MBR (for sorting)
+    mbr = node["mbr"]
     return (mbr[1] + mbr[3]) / 2.0
 
-def str_pack_kombwn(lista_kombwn):
-    # idia logiki me str_pack_fylla, alla gia kombous-paidia
-    # Taksinomisi kata KENTRO MBR (oxi gwnia)
+def str_pack_nodes(node_list):
+    # same idea as str_pack_leaves, but for child nodes
+    # sorted by MBR CENTER (not corner)
 
-    N = len(lista_kombwn)
+    N = len(node_list)
     if N == 0:
         return []
 
@@ -199,162 +199,162 @@ def str_pack_kombwn(lista_kombwn):
     if S < 1:
         S = 1
 
-    # Vima 1: taksinomisi kata kentro_x tou MBR
-    sortd_x = sorted(lista_kombwn, key=key_x_kombou)
+    # Step 1: sort by the MBR's center_x
+    sortd_x = sorted(node_list, key=node_key_x)
 
-    # Vima 2: kopsimo se kathetes lwrides
-    lwrides = xwrise_se_groups(sortd_x, S * MAX_INT)
+    # Step 2: cut into vertical slices
+    slices = split_into_groups(sortd_x, S * MAX_INT)
 
-    # Vima 3: se kathe lwrida, taksinomisi kata kentro_y
-    teliki = []
-    for lwrida in lwrides:
-        sortd_y = sorted(lwrida, key=key_y_kombou)
+    # Step 3: within each slice, sort by center_y
+    final = []
+    for slc in slices:
+        sortd_y = sorted(slc, key=node_key_y)
         for k in sortd_y:
-            teliki.append(k)
+            final.append(k)
 
-    # Vima 4: kopsimo se groups MAX_INT + diorthwsi underflow
-    groups = xwrise_se_groups(teliki, MAX_INT)
-    groups = diorthwse_underflow(groups, MIN_INT)
+    # Step 4: cut into groups of MAX_INT + fix underflow
+    groups = split_into_groups(final, MAX_INT)
+    groups = fix_underflow(groups, MIN_INT)
 
     return groups
 
-def ftiakse_dentro(simeia): # dhmiourgei filla me str kai meta epanaliptika dhmiourgei goneis. kathe goneas apothikeuei ta node-ids kai mbr twn paidiwn tou kai h diadikasia stamata otan menei enas komvos dhladh h riza.
-    # record_id = grammi sto arxeio, ksekinaei apo 1
-    eggrafes = []
-    for i in range(len(simeia)): # edw dinw record-id se kathe shmeio 
+def build_tree(points): # builds the leaves with STR, then repeatedly builds parents. Each parent stores its children's node-ids and MBRs, and the process stops once a single node — the root — remains.
+    # record_id = line number in the file, starting at 1
+    entries = []
+    for i in range(len(points)): # assign a record-id to every point
         rid = i + 1
-        eggrafes.append((rid, simeia[i]))
+        entries.append((rid, points[i]))
 
-    # oi komboi mpainoun se lista - i thesi tous einai to node_id
-    # prosomionei array sto disko
-    oloi_oi_komboi = []
-    epipeda = []        # gia statistika
+    # nodes go into a list — their position is their node_id
+    # simulates an on-disk array
+    all_nodes = []
+    levels = []        # for the statistics
 
-    # ===== EPIPEDO 0: fylla (STR) =====
-    groups_fyllwn = str_pack_fylla(eggrafes)
-    epipedo_0 = []
+    # ===== LEVEL 0: leaves (STR) =====
+    leaf_groups = str_pack_leaves(entries)
+    level_0 = []
 
-    for group in groups_fyllwn:
-        node_id = len(oloi_oi_komboi)   # thesi komvou sthn lysta
+    for group in leaf_groups:
+        node_id = len(all_nodes)   # the node's position in the list
 
-        # MBR tou fyllou apo ta simeia tou
-        simeia_group = []
+        # the leaf's MBR, computed from its points
+        group_points = []
         for eg in group:
-            simeia_group.append(eg[1])
-        mbr = vres_mbr_simeiwn(simeia_group)
+            group_points.append(eg[1])
+        mbr = mbr_of_points(group_points)
 
-        fyllo = {
+        leaf = {
             "node_id" : node_id,
             "is_leaf" : True,
-            "entries" : group,    # lista apo (rid, (x,y))
+            "entries" : group,    # list of (rid, (x,y))
             "mbr"     : mbr
         }
-        oloi_oi_komboi.append(fyllo)
-        epipedo_0.append(fyllo)
+        all_nodes.append(leaf)
+        level_0.append(leaf)
 
-    epipeda.append(epipedo_0)
-    # print("Epipedo 0:", len(epipedo_0), "fylla")  # debug
+    levels.append(level_0)
+    # print("Level 0:", len(level_0), "leaves")  # debug
 
-    # ===== EPIPEDA 1, 2, ... mexri riza (bulk loading, xwris taksinomisi) =====
-    trexon = epipedo_0
+    # ===== LEVELS 1, 2, ... up to the root (bulk loading, no re-sorting) =====
+    current = level_0
 
-    while len(trexon) > 1: #oso exw panw apo 1 komvo prepei na ftiaksw goneis
-        groups_kombwn = str_pack_kombwn(trexon)
-        #anti gia grammi 262 na eixa grammi 263,264
-       # groups_kombwn = xwrise_se_groups(trexon, MAX_INT)
-       #groups_kombwn = diorthwse_underflow(groups_kombwn, MIN_INT)
-        epomeno = []
+    while len(current) > 1: #as long as more than 1 node remains, parents must be built
+        node_groups = str_pack_nodes(current)
+        #instead of the line above we could have used the two lines below
+       # node_groups = split_into_groups(current, MAX_INT)
+       #node_groups = fix_underflow(node_groups, MIN_INT)
+        next_level = []
 
-        for group in groups_kombwn: # gia kathe omada paidiwn ftiaxnw enan gonea
-            node_id = len(oloi_oi_komboi) #dinw node-id ston neo komvo
+        for group in node_groups: # build one parent for every group of children
+            node_id = len(all_nodes) #assign a node-id to the new node
 
-            entries = [] # ayto pou tha apothikeysei o endiamesos komvos
-            mbrs_paidiwn = [] # gia na ypologisw mbr gonea
-            for paidi in group:
-                entries.append((paidi["node_id"], paidi["mbr"])) # gia kathe paidi apothikevw node-id kai mbr
-                mbrs_paidiwn.append(paidi["mbr"])
+            entries = [] # what the internal node will store
+            child_mbrs = [] # for computing the parent's MBR
+            for child in group:
+                entries.append((child["node_id"], child["mbr"])) # for each child, store its node-id and MBR
+                child_mbrs.append(child["mbr"])
 
-            mbr = vres_mbr_kombwn(mbrs_paidiwn)
+            mbr = mbr_of_mbrs(child_mbrs)
 
-            kombos = {
+            node = {
                 "node_id" : node_id,
                 "is_leaf" : False,
-                "entries" : entries,   # lista apo (child_id, mbr_paidiou)
+                "entries" : entries,   # list of (child_id, child_mbr)
                 "mbr"     : mbr
             }
-            oloi_oi_komboi.append(kombos)
-            epomeno.append(kombos)
+            all_nodes.append(node)
+            next_level.append(node)
 
-        epipeda.append(epomeno)
-        # print("Neo epipedo:", len(epomeno), "komboi")  # debug
-        trexon = epomeno
+        levels.append(next_level)
+        # print("New level:", len(next_level), "nodes")  # debug
+        current = next_level
 
-    return oloi_oi_komboi, epipeda
+    return all_nodes, levels
 
-def grapse_csv(oloi_oi_komboi, path): #grafei to Rtree se arxeio, mia grammi an komvo
-    # morfi grammi: node-id , n , flag , (ptr1,geo1) , (ptr2,geo2) , ...
-    # flag = 0 gia fylla, 1 gia endiamesous
+def write_csv(all_nodes, path): #writes the R-tree to a file, one line per node
+    # line format: node-id , n , flag , (ptr1,geo1) , (ptr2,geo2) , ...
+    # flag = 0 for leaves, 1 for internal nodes
     f = open(path, "w")
 
-    for kombos in oloi_oi_komboi: #gia kathe komvo grafeis mia grammi me:
-        nid  = kombos["node_id"] # id komvou
-        n    = len(kombos["entries"]) #plhthos egrafwn
-        flag = 0 if kombos["is_leaf"] else 1 #0 gia fyllo ,1 gia endiameso
+    for node in all_nodes: #one line per node, holding:
+        nid  = node["node_id"] # node id
+        n    = len(node["entries"]) #entry count
+        flag = 0 if node["is_leaf"] else 1 #0 for a leaf, 1 for an internal node
 
-        kommatia = [str(nid), str(n), str(flag)] #str afou h join() doulevei mono me strings
+        parts = [str(nid), str(n), str(flag)] #str because join() only works with strings
 
-        if kombos["is_leaf"]:
+        if node["is_leaf"]:
             # entry = (rid, (x, y))
-            for entry in kombos["entries"]:
+            for entry in node["entries"]:
                 rid = entry[0]
                 x   = entry[1][0]
                 y   = entry[1][1]
                 s = "(" + str(rid) + ",(" + str(x) + ", " + str(y) + "))"
-                kommatia.append(s)
+                parts.append(s)
         else:
             # entry = (child_id, [xl, yl, xh, yh])
-            for entry in kombos["entries"]:
+            for entry in node["entries"]:
                 cid = entry[0]
                 m   = entry[1]
                 s = ("(" + str(cid) + ",["
                      + str(m[0]) + ", " + str(m[1]) + ", "
                      + str(m[2]) + ", " + str(m[3]) + "])")
-                kommatia.append(s)
+                parts.append(s)
 
-        f.write(" , ".join(kommatia) + "\n")
+        f.write(" , ".join(parts) + "\n")
 
     f.close()
 
-def typwse_statistika(epipeda):
-    # ypsos = arithmos epipedwn - 1 (metraw akmees, oxi kombous)
-    ypsos = len(epipeda) - 1
-    print("Height: " + str(ypsos))
+def print_statistics(levels):
+    # height = number of levels - 1 (counting edges, not nodes)
+    height = len(levels) - 1
+    print("Height: " + str(height))
 
-    for i in range(len(epipeda)): #gia kathe epipedo metraw posoi komvoi yparxoun
-        plithos = len(epipeda[i])
+    for i in range(len(levels)): #count how many nodes each level holds
+        count = len(levels[i])
 
         if i == 0:
-            meso_embado = 0.0   # fylla exoun simeia, oxi perioxi -> embado = 0
+            avg_area = 0.0   # leaves hold points, not regions -> area = 0
         else:
-            athroisma = 0.0
-            for kombos in epipeda[i]:
-                athroisma = athroisma + embado_mbr(kombos["mbr"])
-            meso_embado = athroisma / plithos
+            total = 0.0
+            for node in levels[i]:
+                total = total + mbr_area(node["mbr"])
+            avg_area = total / count
 
-        print(str(plithos) + " nodes at level " + str(i) +
-              " with average MBR area " + str(meso_embado))
+        print(str(count) + " nodes at level " + str(i) +
+              " with average MBR area " + str(avg_area))
 
 def main():
     if len(sys.argv) != 3:
-        print("H Swsth Xrisi einai : python Rtree.py <arxeio_eisodou> <arxeio_eksodou>")
+        print("Usage: python Rtree.py <input_file> <output_file>")
         sys.exit(1)
 
-    arxeio_in  = sys.argv[1]
-    arxeio_out = sys.argv[2]
+    file_in  = sys.argv[1]
+    file_out = sys.argv[2]
 
-    simeia                  = diavase_simeia(arxeio_in)
-    oloi_oi_komboi, epipeda = ftiakse_dentro(simeia)
-    grapse_csv(oloi_oi_komboi, arxeio_out)
-    typwse_statistika(epipeda)
+    points        = read_points(file_in)
+    all_nodes, levels = build_tree(points)
+    write_csv(all_nodes, file_out)
+    print_statistics(levels)
 
-main() 
+main()
