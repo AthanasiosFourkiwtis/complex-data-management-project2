@@ -1,111 +1,111 @@
 # AM:4940 FOURKIOTIS ATHANASIOS
-# Perigrafi: Window Range Queries pano sto R-tree.
-#            Fortonw to dentro apo CSV, diavazw ta query parathira
-#            kai vriskw ola ta simeia pou briskontai mesa se kathe parathiro.
+# Description: Window Range Queries on the R-tree.
+#              Loads the tree from CSV, reads the query windows
+#              and finds all the points inside each window.
 
 import sys
 
 
-def diavase_dentro(path):  #ksanaxtizei to R-tree apo to csv se morfh listas komvwn
-    # diavazo to rtree.csv kai ftianxw ton pinaka oloi_oi_komboi
-    # o pinkas einai indexed by node_id (thesi = id, opws sto Rtree.py)
+def read_tree(path):  #rebuilds the R-tree from the csv as a list of nodes
+    # read rtree.csv and build the all_nodes list
+    # the list is indexed by node_id (position = id, same as in Rtree.py)
 
-    f = open(path, "r") #anoigw rtree.csv kai diavazei oles tis grammes
-    grammes = f.readlines()
+    f = open(path, "r") #open rtree.csv and read all the lines
+    lines = f.readlines()
     f.close()
 
-    oloi_oi_komboi = [] #apothikevw olous tous komvous pou diavazw
+    all_nodes = [] #every node I read goes in here
 
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
 
-        # xwrizw me " , " (space-koma-space) - auto einai o diaxoristis pediou
-        # px "0 , 51 , 0 , (42474,(39.74118, 116.070466)) , ..."
-        meri = grammi.split(" , ") #an egrafa .split(",") 8a espage kai ta kommata mesa stis eggrafes
+        # split on " , " (space-comma-space) - that's the field separator
+        # e.g. "0 , 51 , 0 , (42474,(39.74118, 116.070466)) , ..."
+        parts = line.split(" , ") #a plain .split(",") would also break the commas inside the entries
 
-        node_id = int(meri[0])
-        # meri[1] = n (plithos entries) - den to xreiazomai ksexwrista afou metraw eggrafes sto telos
-        flag    = int(meri[2])
+        node_id = int(parts[0])
+        # parts[1] = n (entry count) - not needed separately since the entries get counted at the end
+        flag    = int(parts[2])
         if flag == 0:
             is_leaf = True
         else:
-            is_leaf = False # 0 = fyllo, 1 = endiamesos
+            is_leaf = False # 0 = leaf, 1 = internal
 
-        entries = [] #edw mazevw eggrafes aytou tou komvou
+        entries = [] #the entries of this node get collected here
 
-        # apo meri[3] kai meta einai ta entries
-        for i in range(3, len(meri)):
-            entry_str = meri[i].strip()
+        # from parts[3] onward it's the entries
+        for i in range(3, len(parts)):
+            entry_str = parts[i].strip()
 
-            # kathe entry exei morfi: (ptr,geo) me exwterikh parenthesi
-            # px leaf:     (42474,(39.74118, 116.070466))
-            # px internal: (1057,[39.680577, 116.070466, 40.179911, 116.547263])
-            # Vgazw thn exwteriki parenthesi (1o kai teleytaio char)
-            entry_str = entry_str[1:-1] #agnow prwto kai teleytaio xaraktira
+            # every entry looks like: (ptr,geo) with an outer parenthesis
+            # e.g. leaf:     (42474,(39.74118, 116.070466))
+            # e.g. internal: (1057,[39.680577, 116.070466, 40.179911, 116.547263])
+            # strip the outer parenthesis (1st and last char)
+            entry_str = entry_str[1:-1] #skip the first and last character
 
-            # Vriskw to prwto koma gia na xwrisw ptr apo geo
-            # px "42474,(39.74118, 116.070466)" -> prwto koma sti thesi 5
-            prwto_koma = entry_str.index(",") # vazw index(",") kai oxi find(",") gt xerw oti yparxei komma kai an den yphrxe protimw na skasei 
-            #to programma apo to na synexisei me lathos dedomena
-            ptr     = int(entry_str[:prwto_koma]) # ola ta grammata prin to prwto komma kai me to int ginete metatropi se akeraio
-            #ptr -> record-id an eisai se fyllo kai child-node-id an eisai se endiameso komvo
-            geo_str = entry_str[prwto_koma + 1:].strip() #ola ta grammata meta to prwto komma
-            #gep_str -> point an eisai se fyllo, MBR an eisai se endiameso
+            # find the first comma to split ptr from geo
+            # e.g. "42474,(39.74118, 116.070466)" -> first comma at position 5
+            first_comma = entry_str.index(",") # index(",") instead of find(",") because a comma is guaranteed, and if it weren't
+            #I'd rather the program crash than continue with bad data
+            ptr     = int(entry_str[:first_comma]) # everything before the first comma, int() converts it to an integer
+            #ptr -> record-id in a leaf, child-node-id in an internal node
+            geo_str = entry_str[first_comma + 1:].strip() #everything after the first comma
+            #geo_str -> a point in a leaf, an MBR in an internal node
 
             if is_leaf:
                 # geo_str = "(39.74118, 116.070466)"
-                # Vgazw parenth kai kano split me ", "
+                # strip the parens and split on ", "
                 geo_str = geo_str[1:-1]          # "39.74118, 116.070466"
-                coords  = geo_str.split(", ") # xwrizw tis 2 syntetagmenes px ["39.74118", "116.070466"]
-                x = float(coords[0]) #metatrepw strings(syntetagmenes) se arithmous
+                coords  = geo_str.split(", ") # split the 2 coordinates, e.g. ["39.74118", "116.070466"]
+                x = float(coords[0]) #convert the coordinate strings to numbers
                 y = float(coords[1])
-                entries.append((ptr, (x, y))) #prosthetw tin eggrafi se fyllo edw to ptr einai redord-id ara vazw (record-id, (x,y))
+                entries.append((ptr, (x, y))) #append the leaf entry; here ptr is the record-id so it's (record-id, (x,y))
             else:
                 # geo_str = "[39.682541, 116.070466, 39.74118, 116.119867]"
-                # Vgazw agkistres kai kano split me ", "
+                # strip the brackets and split on ", "
                 geo_str = geo_str[1:-1]          # "39.682541, 116.070466, ..."
                 coords  = geo_str.split(", ")
                 xl = float(coords[0])
                 yl = float(coords[1])
                 xh = float(coords[2])
-                yh = float(coords[3])  #pairnw ta oria tou MBR
-                entries.append((ptr, [xl, yl, xh, yh])) #prosthetw thn eggrafi kai edw to ptr einai child-node-id
-                # ara vazw (child-id, [x_low, y_low, x_high, y_high])
+                yh = float(coords[3])  #the bounds of the MBR
+                entries.append((ptr, [xl, yl, xh, yh])) #append the entry; here ptr is the child-node-id
+                # so it's (child-id, [x_low, y_low, x_high, y_high])
 
-        kombos = {                   #dhmiourgw dictionary gia ton komvo
+        node = {                   #a dictionary for the node
             "node_id" : node_id,
             "is_leaf" : is_leaf,
             "entries" : entries
         }
-        oloi_oi_komboi.append(kombos) #vazw ton komvo sthn lista olwn twn komvwn
+        all_nodes.append(node) #add the node to the list of all nodes
 
-    return oloi_oi_komboi
+    return all_nodes
 
 
-def mbr_epikaluptetai(mbr, W):
-    # Elegxw an to MBR [xl,yl,xh,yh] epikaluptete me to parathiro W
-    # Epistrefw False an to MBR einai TELEIWS ektos tou W (se mia apo tis 4 dieythinseis)
+def mbr_overlaps(mbr, W):
+    # Check whether the MBR [xl,yl,xh,yh] overlaps the window W
+    # Return False if the MBR is COMPLETELY outside W (in one of the 4 directions)
 
-    # to MBR einai teleiws ARISTERA tou W
+    # the MBR is completely to the LEFT of W
     if mbr[2] < W[0]:
         return False
-    # to MBR einai teleiws DEKSIA tou W
+    # the MBR is completely to the RIGHT of W
     if mbr[0] > W[2]:
         return False
-    # to MBR einai teleiws KATW tou W
+    # the MBR is completely BELOW W
     if mbr[3] < W[1]:
         return False
-    # to MBR einai teleiws PANW tou W
+    # the MBR is completely ABOVE W
     if mbr[1] > W[3]:
         return False
 
-    return True   # epikaluptetai
+    return True   # they overlap
 
 
-def simeio_mesa_sto_W(x, y, W):
-    # Elegxw an to simeio (x,y) einai MESA sto parathiro W = [x_low,y_low,x_high,y_high]
+def point_inside_W(x, y, W):
+    # Check whether the point (x,y) is INSIDE the window W = [x_low,y_low,x_high,y_high]
     if x < W[0] or x > W[2]:
         return False
     if y < W[1] or y > W[3]:
@@ -113,55 +113,55 @@ def simeio_mesa_sto_W(x, y, W):
     return True
 
 
-def window_query(oloi_oi_komboi, riza_id, W):
-    # me STIVA (DFS) apo tin riza
-    # Epistrefw lista me ola ta record_ids pou vrethikan mesa sto parathiro W
+def window_query(all_nodes, root_id, W):
+    # with a STACK (DFS) from the root
+    # Returns a list with all the record_ids found inside the window W
 
-    apotelesmata = [] #vazw record-ids pou einai apanthseis
-    stiva = [riza_id] #xekinaw apo thn riza kai xrhsimopoiw stack ara kanw DFS
+    results = [] #the record-ids that are answers
+    stack = [root_id] #start from the root; using a stack means DFS
 
-    while len(stiva) > 0:
-        nid    = stiva.pop()           # pairno ton epomeno komvo apo tin stiva
-        kombos = oloi_oi_komboi[nid]
+    while len(stack) > 0:
+        nid  = stack.pop()           # take the next node off the stack
+        node = all_nodes[nid]
 
-        if kombos["is_leaf"]:
-            # Fyllo: elegxw kathe simeio an einai mesa sto W
-            for entry in kombos["entries"]:
+        if node["is_leaf"]:
+            # Leaf: check every point against W
+            for entry in node["entries"]:
                 rid = entry[0]
                 x   = entry[1][0]
                 y   = entry[1][1]
-                if simeio_mesa_sto_W(x, y, W):
-                    apotelesmata.append(rid)
+                if point_inside_W(x, y, W):
+                    results.append(rid)
         else:
-            # Endiamesos: elegxw to MBR kathe paidiou
-            # An epikaluptete me W, tote mpainei stiva gia na to eksereynisw
-            for entry in kombos["entries"]:
+            # Internal: check each child's MBR
+            # If it overlaps W, push it onto the stack to explore it
+            for entry in node["entries"]:
                 child_id  = entry[0]
                 child_mbr = entry[1]
-                if mbr_epikaluptetai(child_mbr, W):
-                    stiva.append(child_id)
+                if mbr_overlaps(child_mbr, W):
+                    stack.append(child_id)
 
-    return apotelesmata
+    return results
 
 
-def diavase_queries(path): #diavazei kathe parathyro apo to arxeio queries kai to apothikevei ws [x_low, y_low, x_high, y_high]
-    # Diavazo to arxeio me ta window queries
-    # Kathe grammi: "x_low y_low x_high y_high" (4 floats me keno metaksy tous)
+def read_queries(path): #reads every window from the queries file and stores it as [x_low, y_low, x_high, y_high]
+    # Read the file with the window queries
+    # Each line: "x_low y_low x_high y_high" (4 floats separated by spaces)
 
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
     queries = []
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
-        meri   = grammi.split()
-        x_low  = float(meri[0])
-        y_low  = float(meri[1])
-        x_high = float(meri[2])
-        y_high = float(meri[3])
+        parts  = line.split()
+        x_low  = float(parts[0])
+        y_low  = float(parts[1])
+        x_high = float(parts[2])
+        y_high = float(parts[3])
         queries.append([x_low, y_low, x_high, y_high])
 
     return queries
@@ -169,44 +169,44 @@ def diavase_queries(path): #diavazei kathe parathyro apo to arxeio queries kai t
 
 def main():
     if len(sys.argv) != 4:
-        print("Swsth xrisi: python WindowQuery.py <rtree.csv> <windowQueries.txt> <output.txt>")
+        print("Usage: python WindowQuery.py <rtree.csv> <windowQueries.txt> <output.txt>")
         sys.exit(1)
 
-    arxeio_tree    = sys.argv[1]
-    arxeio_queries = sys.argv[2]
-    arxeio_out     = sys.argv[3]
+    tree_file    = sys.argv[1]
+    queries_file = sys.argv[2]
+    out_file     = sys.argv[3]
 
-    # Fortono to R-tree apo to CSV
-    oloi_oi_komboi = diavase_dentro(arxeio_tree)
+    # Load the R-tree from the CSV
+    all_nodes = read_tree(tree_file)
 
-    # H riza einai o teleytaios kombos (oti dinoume teleutaio sto ftiakse_dentro)
-    riza_id = oloi_oi_komboi[-1]["node_id"]
-    # print("Riza:", riza_id, "Synolo kombwn:", len(oloi_oi_komboi))  # debug
+    # The root is the last node (the last thing build_tree produces)
+    root_id = all_nodes[-1]["node_id"]
+    # print("Root:", root_id, "Total nodes:", len(all_nodes))  # debug
 
-    # Diavazo ta query parathira
-    queries = diavase_queries(arxeio_queries)
+    # Read the query windows
+    queries = read_queries(queries_file)
 
-    f_out = open(arxeio_out, "w")
+    f_out = open(out_file, "w")
 
     for i in range(len(queries)):
         W = queries[i]
 
-        apotelesmata = window_query(oloi_oi_komboi, riza_id, W)
+        results = window_query(all_nodes, root_id, W)
 
-        # Taxinomw ta record_ids afxouseis gia eukolo elegxo
-        apotelesmata.sort()
+        # Sort the record_ids ascending for easy checking
+        results.sort()
 
-        # Ftiaxnw to string me ta rids
+        # Build the string with the rids
         str_rids = []
-        for r in apotelesmata:
+        for r in results:
             str_rids.append(str(r))
         rids_str = ",".join(str_rids)
 
-        # Morfi eksodou: "i (count): rid1,rid2,..."
-        grammi_eksodou = str(i) + " (" + str(len(apotelesmata)) + "): " + rids_str
+        # Output format: "i (count): rid1,rid2,..."
+        out_line = str(i) + " (" + str(len(results)) + "): " + rids_str
 
-        print(grammi_eksodou)
-        f_out.write(grammi_eksodou + "\n")
+        print(out_line)
+        f_out.write(out_line + "\n")
 
     f_out.close()
 

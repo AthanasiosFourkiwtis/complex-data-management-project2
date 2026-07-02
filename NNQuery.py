@@ -1,45 +1,45 @@
 # AM:4940 FOURKIOTIS ATHANASIOS
-# Perigrafi: k Nearest Neighbor Queries pano sto R-tree.
-#            Fortonw to dentro apo CSV, diavazw ta query simeia (qx, qy)
-#            kai vriskw tous k plisiesteri geitones gia kathe query.
-#            Algorithmos: Incremental Best-First Search me priority queue (heap).
-#            Kathe simeio pou vgainei apo tin oura einai o epomenos NN.
+# Description: k Nearest Neighbor Queries on the R-tree.
+#              Loads the tree from CSV, reads the query points (qx, qy)
+#              and finds the k nearest neighbors for each query.
+#              Algorithm: Incremental Best-First Search with a priority queue (heap).
+#              Every point that comes off the queue is the next NN.
 
 import sys
 import math
-import heapq #gia priority queue
+import heapq #for the priority queue
 
 
-def diavase_dentro(path):
-    # diavazo to rtree.csv kai ftianxw ton pinaka oloi_oi_komboi
-    # indexed by node_id (thesi = id)
+def read_tree(path):
+    # read rtree.csv and build the all_nodes list
+    # indexed by node_id (position = id)
 
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
-    oloi_oi_komboi = []
+    all_nodes = []
 
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
 
-        meri = grammi.split(" , ")
+        parts = line.split(" , ")
 
-        node_id = int(meri[0])
-        flag    = int(meri[2])
+        node_id = int(parts[0])
+        flag    = int(parts[2])
         is_leaf = (flag == 0)
 
         entries = []
 
-        for i in range(3, len(meri)):
-            entry_str = meri[i].strip()
+        for i in range(3, len(parts)):
+            entry_str = parts[i].strip()
             entry_str = entry_str[1:-1]
 
-            prwti_koma = entry_str.index(",")
-            ptr     = int(entry_str[:prwti_koma])
-            geo_str = entry_str[prwti_koma + 1:].strip()
+            first_comma = entry_str.index(",")
+            ptr     = int(entry_str[:first_comma])
+            geo_str = entry_str[first_comma + 1:].strip()
 
             if is_leaf:
                 geo_str = geo_str[1:-1]
@@ -56,19 +56,19 @@ def diavase_dentro(path):
                 yh = float(coords[3])
                 entries.append((ptr, [xl, yl, xh, yh]))
 
-        kombos = {
+        node = {
             "node_id" : node_id,
             "is_leaf" : is_leaf,
             "entries" : entries
         }
-        oloi_oi_komboi.append(kombos)
+        all_nodes.append(node)
 
-    return oloi_oi_komboi
+    return all_nodes
 
 
-def min_dist_simeio_mbr(qx, qy, mbr):
-    # Elaxisti apostasi apo to simeio (qx,qy) pros to MBR [xl,yl,xh,yh]
-    # Kato frakti: kanena simeio entos MBR den einai pio konta apo afti tin timi
+def min_dist_point_mbr(qx, qy, mbr):
+    # Minimum distance from the point (qx,qy) to the MBR [xl,yl,xh,yh]
+    # Lower bound: no point inside the MBR can be closer than this value
 
     xl = mbr[0]
     yl = mbr[1]
@@ -94,77 +94,77 @@ def min_dist_simeio_mbr(qx, qy, mbr):
     return math.sqrt(dx * dx + dy * dy)
 
 
-def knn_query(oloi_oi_komboi, riza_id, qx, qy, k):
-    # Incremental Best-First Search me priority queue
-    # Stoixeia heap: (apostasi, monot_aux, typos, id)
-    #   typos = 0 -> kombos (node)
-    #   typos = 1 -> simeio (leaf entry / record)
-    # Kathe simeio pou vgainei apo tin oura einai o epomenos NN
-    # Stamatame otan exoume k apotelesmata
+def knn_query(all_nodes, root_id, qx, qy, k):
+    # Incremental Best-First Search with a priority queue
+    # Heap elements: (distance, monot_aux, type, id)
+    #   type = 0 -> node
+    #   type = 1 -> point (leaf entry / record)
+    # Every point that comes off the queue is the next NN
+    # Stop once we have k results
 
     heap  = []    #priority queue
-    monot = [0]   # metriths pou auksanete kathe fora pou vazw kati sto heap kai xreiazetai gia na min 
-    #mperdeuetai to heapq otan 2 stoixeia exoun idia apostasi
+    monot = [0]   # a counter that goes up every time something enters the heap; it's needed so
+    #heapq doesn't get confused when 2 elements have the same distance
 
-    def push_node(nid, dist): #(dist, monot, 0, nid) endiamesos komvos
-        monot[0] = monot[0] + 1 # metrhths kathe fora pou vazw kati sto heap ayksanete
+    def push_node(nid, dist): #(dist, monot, 0, nid) means an internal node
+        monot[0] = monot[0] + 1 # the counter goes up on every heap insert
         heapq.heappush(heap, (dist, monot[0], 0, nid))
 
-    def push_simeio(rid, dist): #(dist, monot, 1, nid) shmainei shmeio
+    def push_point(rid, dist): #(dist, monot, 1, rid) means a point
         monot[0] = monot[0] + 1
         heapq.heappush(heap, (dist, monot[0], 1, rid))
 
-    # Balo tin riza me apostasi 0.0 (pantote to prwto pou tha vgei)
-    push_node(riza_id, 0.0)
+    # Put in the root with distance 0.0 (always the first thing to come out)
+    push_node(root_id, 0.0)
 
-    apotelesmata = []   # record-ids twn k NN me ti seira pou vgainoun
+    results = []   # record-ids of the k NN, in the order they come out
 
-    while len(heap) > 0 and len(apotelesmata) < k: #oso exw pragmata na eksereunisw kai den exw vrei k shmeia synexizw 
-        d, _, typos, eid = heapq.heappop(heap) #to heap mou dinei to stoixeio me thn mikroterh dist
-        #to eid einai an typos=0->node-id an typos=1->redord-id
-        if typos == 1:
-            # Simeio: einai o epomenos plisiesteros geitonas
-            apotelesmata.append(eid)
+    while len(heap) > 0 and len(results) < k: #keep going while there's something to explore and fewer than k points found
+        d, _, typ, eid = heapq.heappop(heap) #the heap gives back the element with the smallest dist
+        #eid is a node-id when typ=0 and a record-id when typ=1
+        if typ == 1:
+            # A point: it's the next nearest neighbor
+            results.append(eid)
         else:
-            # Kombos: ton eksereynw prostethontas ta paidia/simeia tou ston heap
-            kombos = oloi_oi_komboi[eid] # anoigw ton komvo me eid na einai edw node-id
+            # A node: explore it, pushing its children/points onto the heap
+            node = all_nodes[eid] # open the node; eid is a node-id here
 
-            if kombos["is_leaf"]:
-                # Fyllo: prosthetw ola ta simeia tou me tin pragmatiki apostasi tous
-                for entry in kombos["entries"]:
+            if node["is_leaf"]:
+                # Leaf: push all its points with their actual distance
+                for entry in node["entries"]:
                     rid  = entry[0]
                     x    = entry[1][0]
                     y    = entry[1][1]
                     dist = math.sqrt((x - qx) * (x - qx) + (y - qy) * (y - qy))
-                    push_simeio(rid, dist) #to vazw sto heap ws shmeio 
-                    #den to vazw kateutheian sta apotelesmata giati mporei na yparxei allo shmeio 
-                    #apo allo fyllo pou einai pio konta. ara ta vazw heap na apofasisei poio vgenei prwto
+                    push_point(rid, dist) #into the heap as a point
+                    #it doesn't go straight into the results because some other point
+                    #from another leaf might be closer. The heap decides what comes out first
             else:
-                # Endiamesos: prosthetw ta paidia tou me tin MINDIST tous
-                for entry in kombos["entries"]:
+                # Internal: push its children with their MINDIST
+                for entry in node["entries"]:
                     child_id  = entry[0]
                     child_mbr = entry[1]
-                    d_child   = min_dist_simeio_mbr(qx, qy, child_mbr) # ypologizw MINDIST apo to query point sto MBR toy paidiou
-                    push_node(child_id, d_child) #vazw to paidi sto heap ws komvo
+                    d_child   = min_dist_point_mbr(qx, qy, child_mbr) # MINDIST from the query point to the child's MBR
+                    push_node(child_id, d_child) #into the heap as a node
 
-    return apotelesmata
+    return results
 
 
-def diavase_queries(path):
-    # Kathe grammi: "qx qy" (to simeio-erwtima)
+def read_queries(path):
+    # Each line: "qx qy" (the query point)
 
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
     queries = []
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
-        meri = grammi.split()
-        qx = float(meri[0])
-        qy = float(meri[1])
+        parts = line.split()
+        qx = float(parts[0])
+        qy = float(parts[1])
         queries.append((qx, qy))
 
     return queries
@@ -172,37 +172,37 @@ def diavase_queries(path):
 
 def main():
     if len(sys.argv) != 5:
-        print("Swsth xrisi: python NNQuery.py <rtree.csv> <NNQueries.txt> <output.txt> <k>")
+        print("Usage: python NNQuery.py <rtree.csv> <NNQueries.txt> <output.txt> <k>")
         sys.exit(1)
 
-    arxeio_tree    = sys.argv[1]
-    arxeio_queries = sys.argv[2]
-    arxeio_out     = sys.argv[3]
-    k              = int(sys.argv[4])
+    tree_file    = sys.argv[1]
+    queries_file = sys.argv[2]
+    out_file     = sys.argv[3]
+    k            = int(sys.argv[4])
 
-    oloi_oi_komboi = diavase_dentro(arxeio_tree)
+    all_nodes = read_tree(tree_file)
 
-    riza_id = oloi_oi_komboi[-1]["node_id"]
+    root_id = all_nodes[-1]["node_id"]
 
-    queries = diavase_queries(arxeio_queries)
+    queries = read_queries(queries_file)
 
-    f_out = open(arxeio_out, "w")
+    f_out = open(out_file, "w")
 
     for i in range(len(queries)):
         qx, qy = queries[i]
 
-        apotelesmata = knn_query(oloi_oi_komboi, riza_id, qx, qy, k)
+        results = knn_query(all_nodes, root_id, qx, qy, k)
 
-        # Morfi eksodou: "i: rid1,rid2,rid3,..."  (xwris arithmo, xwris apostasi)
+        # Output format: "i: rid1,rid2,rid3,..."  (no count, no distance)
         str_rids = []
-        for rid in apotelesmata:
+        for rid in results:
             str_rids.append(str(rid))
         rids_str = ",".join(str_rids)
 
-        grammi_eksodou = str(i) + ": " + rids_str
+        out_line = str(i) + ": " + rids_str
 
-        print(grammi_eksodou)
-        f_out.write(grammi_eksodou + "\n")
+        print(out_line)
+        f_out.write(out_line + "\n")
 
     f_out.close()
 

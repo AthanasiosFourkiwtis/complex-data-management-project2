@@ -1,42 +1,42 @@
 # AM:4940 FOURKIOTIS ATHANASIOS
-# Perigrafi: Distance Range Queries pano sto R-tree.
-#            Fortonw to dentro apo CSV, diavazw ta query (qx, qy, r)
-#            kai vriskw ola ta simeia entos apostasis r apo to (qx, qy).
+# Description: Distance Range Queries on the R-tree.
+#              Loads the tree from CSV, reads the queries (qx, qy, r)
+#              and finds all the points within distance r from (qx, qy).
 
 import sys
 import math
 
 
-def diavase_dentro(path):
-    # diavazo to rtree.csv kai ftianxw ton pinaka oloi_oi_komboi
-    # indexed by node_id (thesi = id)
+def read_tree(path):
+    # read rtree.csv and build the all_nodes list
+    # indexed by node_id (position = id)
 
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
-    oloi_oi_komboi = []
+    all_nodes = []
 
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
 
-        meri = grammi.split(" , ")
+        parts = line.split(" , ")
 
-        node_id = int(meri[0])
-        flag    = int(meri[2])
+        node_id = int(parts[0])
+        flag    = int(parts[2])
         is_leaf = (flag == 0)
 
         entries = []
 
-        for i in range(3, len(meri)):
-            entry_str = meri[i].strip()
+        for i in range(3, len(parts)):
+            entry_str = parts[i].strip()
             entry_str = entry_str[1:-1]
 
-            prwti_koma = entry_str.index(",")
-            ptr     = int(entry_str[:prwti_koma])
-            geo_str = entry_str[prwti_koma + 1:].strip()
+            first_comma = entry_str.index(",")
+            ptr     = int(entry_str[:first_comma])
+            geo_str = entry_str[first_comma + 1:].strip()
 
             if is_leaf:
                 geo_str = geo_str[1:-1]
@@ -53,26 +53,26 @@ def diavase_dentro(path):
                 yh = float(coords[3])
                 entries.append((ptr, [xl, yl, xh, yh]))
 
-        kombos = {
+        node = {
             "node_id" : node_id,
             "is_leaf" : is_leaf,
             "entries" : entries
         }
-        oloi_oi_komboi.append(kombos)
+        all_nodes.append(node)
 
-    return oloi_oi_komboi
+    return all_nodes
 
 
-def min_dist_simeio_mbr(qx, qy, mbr): #epistrefei thn elaxisth dynath apostash apo to query point mexri to MBR
-    # Elaxisti apostasi apo to simeio (qx,qy) pros to MBR [xl,yl,xh,yh]
-    # Vriskw to eggytero simeio panw sto MBR kai ypologizw tin apostasi
+def min_dist_point_mbr(qx, qy, mbr): #returns the smallest possible distance from the query point to the MBR
+    # Minimum distance from the point (qx,qy) to the MBR [xl,yl,xh,yh]
+    # Find the closest point on the MBR and compute the distance to it
 
     xl = mbr[0]
     yl = mbr[1]
     xh = mbr[2]
     yh = mbr[3]
 
-    # Eggytero x panw sto [xl, xh]
+    # Closest x within [xl, xh]
     if qx < xl:
         cx = xl
     elif qx > xh:
@@ -80,7 +80,7 @@ def min_dist_simeio_mbr(qx, qy, mbr): #epistrefei thn elaxisth dynath apostash a
     else:
         cx = qx
 
-    # Eggytero y panw sto [yl, yh]
+    # Closest y within [yl, yh]
     if qy < yl:
         cy = yl
     elif qy > yh:
@@ -90,57 +90,57 @@ def min_dist_simeio_mbr(qx, qy, mbr): #epistrefei thn elaxisth dynath apostash a
 
     dx = qx - cx
     dy = qy - cy
-    return math.sqrt(dx * dx + dy * dy)  #ypologizw eykleidia apostash
+    return math.sqrt(dx * dx + dy * dy)  #euclidean distance
 
 
-def distance_query(oloi_oi_komboi, riza_id, qx, qy, r):
-    # DFS me stiva
-    # Epistrefw lista me ola ta record_ids pou exoun apostasi <= r apo (qx, qy)
+def distance_query(all_nodes, root_id, qx, qy, r):
+    # DFS with a stack
+    # Returns a list with all the record_ids at distance <= r from (qx, qy)
 
-    apotelesmata = []
-    stiva = [riza_id]
+    results = []
+    stack = [root_id]
 
-    while len(stiva) > 0:
-        nid    = stiva.pop()
-        kombos = oloi_oi_komboi[nid]
+    while len(stack) > 0:
+        nid  = stack.pop()
+        node = all_nodes[nid]
 
-        if kombos["is_leaf"]:
-            # Fyllo: elegxw kathe simeio
-            for entry in kombos["entries"]:
+        if node["is_leaf"]:
+            # Leaf: check every point
+            for entry in node["entries"]:
                 rid = entry[0]
                 x   = entry[1][0]
                 y   = entry[1][1]
                 dist = math.sqrt((x - qx) * (x - qx) + (y - qy) * (y - qy))
-                if dist <= r: #an h apostash mikroterh h isi apo aktina karatw to record-id 
-                    apotelesmata.append(rid)
+                if dist <= r: #if the distance is within the radius, keep the record-id
+                    results.append(rid)
         else:
-            # Endiamesos: elegxw an to MBR kathe paidiou temnei tin sfaira aposatsis r
-            # Monopatia me MINDIST(simeio, MBR) > r den mporoun na periexoun simeia entos r
-            for entry in kombos["entries"]:
+            # Internal: check whether each child's MBR cuts the sphere of radius r
+            # Paths with MINDIST(point, MBR) > r can't contain points within r
+            for entry in node["entries"]:
                 child_id  = entry[0]
                 child_mbr = entry[1]
-                if min_dist_simeio_mbr(qx, qy, child_mbr) <= r:
-                    stiva.append(child_id)
+                if min_dist_point_mbr(qx, qy, child_mbr) <= r:
+                    stack.append(child_id)
 
-    return apotelesmata
+    return results
 
 
-def diavase_queries(path):
-    # Kathe grammi: "qx qy r" (kentro kai aktina)
+def read_queries(path):
+    # Each line: "qx qy r" (center and radius)
 
     f = open(path, "r")
-    grammes = f.readlines()
+    lines = f.readlines()
     f.close()
 
     queries = []
-    for grammi in grammes:
-        grammi = grammi.strip()
-        if grammi == "":
+    for line in lines:
+        line = line.strip()
+        if line == "":
             continue
-        meri = grammi.split()
-        qx = float(meri[0])
-        qy = float(meri[1])
-        r  = float(meri[2])
+        parts = line.split()
+        qx = float(parts[0])
+        qy = float(parts[1])
+        r  = float(parts[2])
         queries.append((qx, qy, r))
 
     return queries
@@ -148,37 +148,37 @@ def diavase_queries(path):
 
 def main():
     if len(sys.argv) != 4:
-        print("Swsth xrisi: python DistanceQuery.py <rtree.csv> <distanceQueries.txt> <output.txt>")
+        print("Usage: python DistanceQuery.py <rtree.csv> <distanceQueries.txt> <output.txt>")
         sys.exit(1)
 
-    arxeio_tree    = sys.argv[1]
-    arxeio_queries = sys.argv[2]
-    arxeio_out     = sys.argv[3]
+    tree_file    = sys.argv[1]
+    queries_file = sys.argv[2]
+    out_file     = sys.argv[3]
 
-    oloi_oi_komboi = diavase_dentro(arxeio_tree)
+    all_nodes = read_tree(tree_file)
 
-    riza_id = oloi_oi_komboi[-1]["node_id"]
+    root_id = all_nodes[-1]["node_id"]
 
-    queries = diavase_queries(arxeio_queries)
+    queries = read_queries(queries_file)
 
-    f_out = open(arxeio_out, "w")
+    f_out = open(out_file, "w")
 
     for i in range(len(queries)):
         qx, qy, r = queries[i]
 
-        apotelesmata = distance_query(oloi_oi_komboi, riza_id, qx, qy, r)
+        results = distance_query(all_nodes, root_id, qx, qy, r)
 
-        apotelesmata.sort()
+        results.sort()
 
         str_rids = []
-        for rid in apotelesmata:
+        for rid in results:
             str_rids.append(str(rid))
         rids_str = ",".join(str_rids)
 
-        grammi_eksodou = str(i) + " (" + str(len(apotelesmata)) + "): " + rids_str
+        out_line = str(i) + " (" + str(len(results)) + "): " + rids_str
 
-        print(grammi_eksodou)
-        f_out.write(grammi_eksodou + "\n")
+        print(out_line)
+        f_out.write(out_line + "\n")
 
     f_out.close()
 
