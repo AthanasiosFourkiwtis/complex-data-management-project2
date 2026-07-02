@@ -1,24 +1,24 @@
 # MYE-041 — Project 2: R-tree & Spatial Queries
 
-Second assignment for **MYE-041 Complex Data Management**, Department of Computer Science & Engineering, University of Ioannina.
+Second project for **MYE-041 Complex Data Management** (CSE, University of Ioannina).
 
-## Contents
+## What's in here
 
-- `Rtree.py` — R-tree construction with STR bulk loading
-- `WindowQuery.py` — Window range queries
+- `Rtree.py` — builds the R-tree with STR bulk loading
+- `WindowQuery.py` — window range queries
 - `NNQuery.py` — k-nearest neighbor queries
-- `DistanceQuery.py` — Distance range queries
-- `Beijing_restaurants.txt` — Input data (coordinates of restaurants in Beijing)
-- `windowRangeQueries.txt`, `distanceRangeQueries.txt`, `NNQueries.txt` — Query files
-- `rtree.csv`, `out_*.txt` — Sample output files
-- `Anafora2.pdf` — Project report
-- `Assignment2.pdf` — Assignment handout
+- `DistanceQuery.py` — distance range queries
+- `Beijing_restaurants.txt` — input data (restaurant coordinates in Beijing)
+- `windowRangeQueries.txt`, `distanceRangeQueries.txt`, `NNQueries.txt` — the query files
+- `rtree.csv`, `out_*.txt` — example output files
+- `Anafora2.pdf` — my report
+- `Assignment2.pdf` — the assignment description
 
-## Usage
+## How to run
 
 ### Step 1 — Build the R-tree
 
-Takes the points file and produces `rtree.csv` (the serialized R-tree). **Must be run first**, since all the queries rely on `rtree.csv`:
+Takes the points file and produces `rtree.csv` (the serialized R-tree). This has to run first, since all the queries read `rtree.csv`:
 
 ```bash
 python Rtree.py <input_points> <output_csv>
@@ -26,11 +26,11 @@ python Rtree.py <input_points> <output_csv>
 python Rtree.py Beijing_restaurants.txt rtree.csv
 ```
 
-On completion it prints tree statistics (height, nodes per level, average MBR area).
+At the end it prints some stats (height, nodes per level, average MBR area).
 
 ### Step 2 — Window Range Queries
 
-Returns every point that falls inside each rectangular query window:
+Returns all the points inside each rectangular window:
 
 ```bash
 python WindowQuery.py <rtree_csv> <queries_file> <output_file>
@@ -40,7 +40,7 @@ python WindowQuery.py rtree.csv windowRangeQueries.txt out_win.txt
 
 ### Step 3 — Distance Range Queries
 
-Returns every point within a given distance of each query point:
+Returns all the points within a given distance from each query point:
 
 ```bash
 python DistanceQuery.py <rtree_csv> <queries_file> <output_file>
@@ -50,7 +50,7 @@ python DistanceQuery.py rtree.csv distanceRangeQueries.txt out_dist.txt
 
 ### Step 4 — k-NN Queries
 
-Returns the `k` nearest points to each query point. Takes `k` as an extra argument:
+Returns the `k` closest points for each query point. Takes one extra argument, `k`:
 
 ```bash
 python NNQuery.py <rtree_csv> <queries_file> <output_file> <k>
